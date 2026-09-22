@@ -23,6 +23,7 @@ your pipeline, not giving up.
 """
 
 from dataclasses import dataclass
+import re
 
 import config
 from ingest import Document
@@ -82,22 +83,68 @@ def fallback_split(
 
 def split_documents(documents: list[Document]) -> list[Chunk]:
     """
-    Split documents into chunks. ⚠️ REPLACE THE BODY OF THIS IN MILESTONE 3.
-
-    Right now it just calls the fallback. That is the plain, generic behaviour
-    the brief is talking about.
-
-    When you write your own strategy, set `produced_by` to
-    "chunker.py::split_documents" so your README's Sample Chunks section names
-    the right function. `app.py chunks` prints that string for you.
-
-    Things worth thinking about before you write any code:
-      - Are your documents short posts or long guides?
-      - Is the useful information in one sentence, or spread over a paragraph?
-      - Would splitting on paragraph breaks keep more thoughts intact than
-        splitting on a character count?
+    Custom chunker for campus_life corpus: splits documents on natural
+    paragraph and sentence boundaries while preserving context and discarding
+    useless fragments.
     """
-    return fallback_split(documents)
+    chunks: list[Chunk] = []
+    min_chunk_len = 80       # Discard fragments shorter than 80 chars
+    target_max_len = 500     # Target maximum chunk size in characters
+
+    for doc in documents:
+        text = doc.text.strip()
+        if not text:
+            continue
+
+        # If document is already small enough, keep as single chunk
+        if len(text) <= target_max_len:
+            if len(text) >= min_chunk_len:
+                chunks.append(
+                    Chunk(
+                        text=text,
+                        source=doc.source,
+                        index=0,
+                        produced_by="chunker.py::split_documents",
+                    )
+                )
+            continue
+
+        # Split multi-paragraph posts by paragraph or sentence boundaries
+        paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+        
+        # Fallback to sentence split if single paragraph is too long
+        extracted_pieces: list[str] = []
+        for para in paragraphs:
+            if len(para) <= target_max_len:
+                extracted_pieces.append(para)
+            else:
+                sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", para) if s.strip()]
+                curr_piece = ""
+                for sent in sentences:
+                    if len(curr_piece) + len(sent) + 1 <= target_max_len:
+                        curr_piece = f"{curr_piece} {sent}".strip()
+                    else:
+                        if len(curr_piece) >= min_chunk_len:
+                            extracted_pieces.append(curr_piece)
+                        curr_piece = sent
+                if len(curr_piece) >= min_chunk_len:
+                    extracted_pieces.append(curr_piece)
+
+        # Store created chunks
+        chunk_idx = 0
+        for piece in extracted_pieces:
+            if len(piece) >= min_chunk_len:
+                chunks.append(
+                    Chunk(
+                        text=piece,
+                        source=doc.source,
+                        index=chunk_idx,
+                        produced_by="chunker.py::split_documents",
+                    )
+                )
+                chunk_idx += 1
+
+    return chunks
 
 
 def describe(chunks: list[Chunk]) -> str:
