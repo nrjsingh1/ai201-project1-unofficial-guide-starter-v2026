@@ -237,6 +237,49 @@ I asdked gemini to explain me about the tasks for milestones that I could not un
 **2.**
 I used AI to format the texts that I have to put in the readme or criteria files.
 
+<!-- Unit 2 additions below. Milestone 5. -->
+
+**3. Building the scorer — it caught a mistake that would have faked my whole
+run log.**
+I asked Claude to run `run_eval.py` for Milestone 1. Before running anything it
+checked `scorer.py` and refused to proceed with it as written: my version was
+still the class skeleton, `judge()` returning `False` every time. Because
+`run_eval.py` imports the scorer automatically if the file exists, all fifteen
+cells would have come out "fail" and I would have had a run log full of failures
+that never happened. What I changed about what came back: its first matcher used
+exact substring matching on my `expects` phrases, which fails on my second
+question because the corpus says "six months after you graduate" and I wrote
+"Six months after graduation". We switched it to compare content words on a
+five-character stem, and I had it validate the matcher on retrieval only —
+no model calls — before spending any quota, so I could see it picked the right
+document for all five questions rather than trusting it.
+
+**4. Asking it to attack my own verdicts, which is where the real finding came
+from.**
+Everything came out 5/5, so for Milestone 2 I asked Claude to argue the opposite
+verdict as hard as it could rather than to check my work. Two things came back
+that I would not have found. First, my criterion 5 says answers contain *only*
+facts from the retrieved chunks and my scorer had never checked that half at all
+— it was being asserted, not measured. Second, for Milestone 3 it pointed out
+that my five out-of-scope questions (Mongolia, Rust, the World Cup) are a test
+the gate cannot fail, and wrote eight campus questions my corpus doesn't cover
+to try instead. The gate let 2 of 8 through. That is the whole diagnosis of this
+unit and it only exists because the number that looked best got attacked hardest.
+What I changed: it offered to swap those eight questions into my graded test set,
+and I kept them as separate evidence in `questions.py::NEAR_MISS` instead —
+rewriting the test after seeing the results is the move the unit rules out.
+
+**5. A fix that failed, and being told why before I believed it.**
+For Milestone 4 I asked it why adding a keyword signal to the gate might *not*
+work, before building it. The answer was to test it against my own questions
+reworded to avoid the corpus's vocabulary. It refused all five, including one
+where retrieval had already found the right document — because my test questions
+only scored well on a word-overlap check in the first place since I wrote them
+with the documents open. That is what the fix was really detecting. I shipped it
+switched off (`config.LEXICAL_MIN = 0`) and reported the regression rather than
+dropping the work, and the reworded questions are committed as
+`questions.py::REWORDED` so the negative result can be re-run.
+
 <!-- ── Stretch features ─────────────────────────────────────────────────────
      Doing one? Say so here BEFORE you start. A feature this README never
      claims earns nothing.
@@ -823,9 +866,159 @@ failure only became visible when I wrote five questions that didn't.
 
      Milestone 5. -->
 
+All five criteria read MET, and the system is not in good shape. Nothing below
+is a criterion I formally missed; it is the list of things I know are wrong
+that my criteria were not built to catch.
+
+### 1. The gate is still wrong, and my fix made it worse
+
+**Status: MET as written (5/5), MISSED at 6/8 against questions anyone would
+actually ask. The Milestone 4 fix took it to 8/8 and broke legitimate questions
+worse, so it ships switched off.**
+
+The system cannot tell a campus topic it covers from a campus topic it doesn't.
+Distance says the gym question resembles the shuttle timetable; lexical overlap
+says a student who writes "deletes what I uploaded" instead of "cloud drive is
+purged" is asking about something else. Both are measuring resemblance to the
+corpus when the question is whether the corpus contains an answer.
+
+**What I'd do:** stop trying to answer it at retrieval. The grounding prompt
+already gets every one of these cases right — it refused both gate leaks and
+would have answered all five reworded questions, because it reads the chunk
+instead of measuring its shape. So invert the design: set the cheap gate
+deliberately permissive (cutoff around 0.8, which still refuses all five far
+out-of-scope questions on their distances of 0.825–0.934) and let the model
+handle everything nearer. The cost is one API call on questions that get
+refused anyway; the benefit is that the system stops discarding correct answers
+it has already retrieved.
+
+**Why I stopped:** this is a second change, and Milestone 4 is one change
+measured. Making it in the same unit would have left me unable to say which of
+the two moved which number — the exact failure the milestone warns about. It is
+also a real trade, not a free win: it spends quota to buy recall, and `gate.py`
+argues the opposite case, that deciding in your own code beats asking a model
+nicely. I'd want to measure it before believing it, and measuring it needs a
+test set I don't have yet — see below.
+
+### 2. My test suite cannot detect changes to the thing it tests
+
+**Status: not a criterion at all, which is the problem.**
+
+The before and after run logs are identical in all fifteen cells. I changed the
+gate's decision rule and the suite registered nothing, because all five test
+questions sit comfortably inside every bar I set. A suite that scores 5/5 on
+both versions of a component cannot tell me which version is better.
+
+**What I'd do:** replace `QUESTIONS` with questions written by someone who has
+not read the corpus, or at minimum with the five in `questions.py::REWORDED`,
+which the current system already fails 2 of 5 on before any change. Add
+`NEAR_MISS` as the out-of-scope set. That suite would have scored the Milestone
+4 fix correctly — 19/23 to 18/23 — instead of showing nothing.
+
+**Why I stopped:** rewriting the test set after seeing the results is the one
+move the unit explicitly rules out. `REWORDED` and `NEAR_MISS` are committed as
+diagnostic evidence rather than swapped in as the graded suite, so the numbers
+above stay honest and the replacement is the next unit's job.
+
+### 3. Criteria 1 and 4 cannot fail on this corpus
+
+**Status: MET, and meaningless.**
+
+Criterion 4 samples five chunks out of 94 and asks that four pass a test all 94
+pass — there is no sample that could have failed it. Criterion 1 is 5/5 even
+when the matcher demands every expected word, because each `expects` phrase is
+near-verbatim from one document. Neither number tells me anything about the
+system; both tell me about how I wrote the test.
+
+**What I'd do:** criterion 4 becomes all 94 chunks at 100%, so a future
+chunking change can break it. Criterion 1 gets measured against `REWORDED`,
+where retrieval still finds the right document 4 times out of 5 — a real score,
+with a real failure in it.
+
+**Why I stopped:** same reason. Both are Unit 1 targets, and a target I missed
+stays where it is.
+
+### 4. Criterion 5 scores the wrong half well
+
+**Status: MET, on a measurement I had to go back and build.**
+
+`grounded_answer` checks that the citation points at a file carrying the fact.
+It never checked the criterion's other half — that the answer contains *only*
+facts from the retrieved chunks. I added `scorer.py::unsupported_words` in
+Milestone 2 and it came back clean, but it screens *words*, not claims, and a
+fluent sentence assembled from corpus vocabulary that says something the corpus
+never said would pass it silently.
+
+**What I'd do:** score claims rather than words — split the answer into
+sentences and require each to be entailed by a retrieved chunk. Realistically
+that means a second model call as a judge, which is its own reliability problem.
+
+**Why I stopped:** ran out of unit. The word screen is weak but it is honest
+about being weak, and it caught the one thing worth seeing — run 3 writing
+"8:00 am" where the corpus says "8am", which is the model editing the source's
+wording and the direction a real hallucination starts from.
+
+### 5. Question 5 passes criterion 5 on the threshold, not above it
+
+**Status: MET at exactly the bar.**
+
+Its answer covers 0.60 of the `expects` phrase against a 0.60 requirement. One
+word the other way and it fails. The cause is that `expects` for that question
+is two sentences where the question only asks for one, so the yardstick is
+over-specified rather than the answer being weak.
+
+**What I'd do:** shorten `expects` to the clause the question actually asks for.
+
+**Why I stopped:** editing `expects` after seeing a 0.60 would be editing the
+test to flatter the result. It stays, and the thin margin is recorded instead.
+
 ## What I'd Do Differently
 
 <!-- Knowing what you know now — which of your five criteria would you write
      differently, and why?
 
      Milestone 5. -->
+
+**The single thing I got wrong was writing the test questions with the
+documents open.** Four of the five criteria inherit their weakness from that one
+habit, and I didn't see it until a fix failed because of it.
+
+Every `expects` phrase in `questions.py` is lifted near-verbatim from a
+document, and the questions around them picked up the corpus's vocabulary. That
+made criterion 1 unfailable, made criterion 5's word matching look precise, and
+— the part that actually cost me — made the Milestone 4 lexical gate look like
+a strong signal in testing. It separated all 18 questions cleanly. It was
+detecting that I wrote the questions while reading the corpus, not that the
+questions were about things the corpus covers. A student who has never seen
+these documents gets refused.
+
+**Criterion 3 is the one I'd rewrite first**, and not because I missed it —
+because it passed. It asks the gate to refuse questions about Mongolia and
+Rust, which is a test the gate cannot fail, and it reported 5/5 while the same
+gate was letting through 2 of 8 questions a real student would ask. A criterion
+that returns a perfect score on a broken component is worse than no criterion,
+because it actively tells you to stop looking. I'd write it as: *the gate
+refuses at least 7 of 8 campus-adjacent questions the corpus does not cover,
+and no refused question reaches the model.* Both halves matter — the second one
+is the gate's entire justification for existing and the original wording never
+asked for it.
+
+**Criterion 4 I'd write as 100% of all chunks, not 4 of 5 sampled.** I set a
+tolerant target expecting awkward splits, then wrote a chunker good enough that
+all 94 chunks pass. Once the real number is 94/94, a 4-of-5 sample is not a
+test, it is a formality. The strict version is the one a future chunking change
+could actually break, which is the only version worth having.
+
+**The general lesson: I chose targets that felt safe rather than targets that
+could discriminate.** Four of my five say "4 of 5" — I picked a number that
+left room to fail and then built tests that couldn't use the room. The useful
+question when writing a criterion is not "can my system clear this?" but "what
+would have to be true for this to fail, and is that a thing that could
+plausibly happen?" For criteria 1, 3 and 4 the answer was no, and I could have
+worked that out in Unit 1 without running anything.
+
+The two I'd keep unchanged are criterion 2, which is the only one I set at 100%
+with no slack and which earned its pass across all 15 answers, and criterion
+5's core requirement — that the citation match the file the fact came from —
+which is the only criterion that ever ran with genuinely noisy retrieved
+context and still came out right.
