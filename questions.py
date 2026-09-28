@@ -70,6 +70,24 @@ NEAR_MISS = [
 ]
 
 
+# The same five facts as QUESTIONS, asked in words the corpus does not use —
+# added in Unit 2 Milestone 4.
+#
+# These are what killed the lexical gate. Every question in QUESTIONS above was
+# written while reading the documents, so each one arrives carrying the
+# corpus's own vocabulary, and any test built only on them will score a
+# word-overlap check as excellent. A real student has not read the documents.
+# Rewording the same five questions drops the gate from 3 of 5 admitted to 0
+# of 5 once the lexical check is switched on.
+REWORDED = [
+    "The permits are gone for the year. Is there anywhere I can leave my car without getting fined?",
+    "After I finish my degree, how long before the university deletes what I uploaded?",
+    "I need to see someone about a medical problem today, not in a week. Options?",
+    "What point in the year should I be looking for paid work run by the university?",
+    "Which day and hour should I pick if I want a free machine straight away?",
+]
+
+
 def answered() -> list[dict]:
     """The questions you've actually filled in."""
     return [q for q in QUESTIONS if q.get("question", "").strip()]

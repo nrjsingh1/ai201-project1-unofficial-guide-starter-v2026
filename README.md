@@ -698,25 +698,40 @@ from it. That is the harder test I thought I had written and didn't.
 
 ## The Improvement
 
-**What I changed:**
+**What I changed:** Added a second, independent signal to the relevance gate.
+A question now has to clear two bars instead of one — semantic distance under
+0.6, *and* at least 35% of its content words present in the nearest retrieved
+chunk (`gate.py::lexical_support`, combined with AND in `gate.py::check`,
+tuned by `config.LEXICAL_MIN`). One change, one stage.
 
-**Why I picked it:**
+**Why I picked it:** My diagnosis said the gate leaks because distance measures
+a question's *shape* rather than its topic, and that no threshold can fix it
+because the in-scope and near-miss distance bands overlap — so the only way out
+is a signal of a different kind, and lexical overlap is one, because the gym
+question shares a shape with the shuttle timetable but not a vocabulary.
 
-<!-- Connect it to a specific diagnosis above in one sentence. If you can't,
-     you picked a fix because it sounded impressive. -->
+**It did not work.** I am keeping it in the repo, switched off by default
+(`config.LEXICAL_MIN = 0`), because the measurement is the useful part.
 
-### Run Log — After
+### Run Log — Before and After, side by side
 
-<!-- Same format, same five criteria, three runs each.
-     `python run_eval.py --label after` -->
+Before: [`results/run_2026-09-27_1939_before.md`](results/run_2026-09-27_1939_before.md) ·
+After: [`results/run_2026-09-27_2217_after.md`](results/run_2026-09-27_2217_after.md).
+Both are 5 questions × 3 runs, caching off, 15 real model calls each.
 
-| Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
+| Criterion | Target | Before (R1/R2/R3) | After (R1/R2/R3) | Change | Verdict |
 |---|---|---|---|---|---|
-| 1. Retrieved chunk contains the answer | 4 of 5 |  |  |  |  |
-| 2. Every answer names a source | 5 of 5 |  |  |  |  |
-| 3. Gate stops out-of-corpus questions | 4 of 5 |  |  |  |  |
-| 4. | | | | | |
-| 5. | | | | | |
+| 1. Retrieved chunk contains the answer | 4 of 5 | 5/5 · 5/5 · 5/5 | 5/5 · 5/5 · 5/5 | none | MET |
+| 2. Every answer names a source | 5 of 5 | 5/5 · 5/5 · 5/5 | 5/5 · 5/5 · 5/5 | none | MET |
+| 3. Gate stops out-of-corpus questions | 4 of 5 | 5/5 · 5/5 · 5/5 | 5/5 · 5/5 · 5/5 | none | MET |
+| 4. Chunk completeness and boundary integrity | 4 of 5 | 5/5 · 5/5 · 5/5 | 5/5 · 5/5 · 5/5 | none | MET |
+| 5. Answer factual grounding and citation accuracy | 4 of 5 | 5/5 · 5/5 · 5/5 | 5/5 · 5/5 · 5/5 | none | MET |
+
+**Not one cell moved.** That is itself a finding, and it is the Milestone 3
+finding arriving again: all five of my test questions use the corpus's own
+vocabulary, so all five clear a lexical bar comfortably (0.400 to 0.667 against
+a 0.35 requirement). A test suite that can't distinguish the two versions of
+the gate isn't sensitive enough to evaluate a change to the gate.
 
 **Did it help?**
 
@@ -726,6 +741,77 @@ from it. That is the harder test I thought I had written and didn't.
      tell.
 
      Milestone 4. -->
+
+**No. It made the system worse, and my five criteria could not see it either
+way.**
+
+Because the run log came out identical, I measured the gate directly on four
+question sets instead — the only way to tell whether the change did anything:
+
+| Question set | Must the gate... | Before | After |
+|---|---|---|---|
+| My 5 test questions | pass | **5/5** | **5/5** |
+| 5 real questions, reworded to avoid corpus vocabulary | pass | **3/5** | **0/5** |
+| 8 campus-adjacent questions the corpus lacks (`NEAR_MISS`) | refuse | **6/8** | **8/8** |
+| 5 original `OUT_OF_SCOPE` questions | refuse | **5/5** | **5/5** |
+| **Total correct** | | **19/23** | **18/23** |
+
+It bought exactly what the diagnosis predicted — the two leaks closed, and
+near-miss refusal went 6/8 to 8/8, which would have turned my proposed tightened
+criterion from a miss into a pass. It paid more than that for it. Legitimate
+questions asked in different words went from 3 of 5 admitted to 0 of 5:
+
+```
+  REFUSED  dist=0.452  lex=0.000   "After I finish my degree, how long before
+                                    the university deletes what I uploaded?"
+                                    -> retrieved admin_wifi_and_accounts.txt
+```
+
+That is the worst failure in this whole project. Distance 0.452 is the second
+closest match in the entire test set, retrieval found precisely the right
+document, the answer was sitting in the chunk — and the gate threw it away
+because the student said "deletes what I uploaded" instead of "cloud drive is
+purged". Refusing an out-of-scope question costs someone a second attempt.
+Refusing this one tells a student the university has no answer about their
+files when it does.
+
+**Why it failed, which I should have seen before building it.** I checked
+whether the lexical signal separated my question sets, and it did — cleanly,
+all 18 questions, in-scope 0.400–0.667 against everything-else 0.000–0.333. What
+I didn't check until after was *why* it separated. It wasn't detecting that
+those questions were about topics in the corpus. It was detecting that I wrote
+them while looking at the corpus. Every `expects` phrase in `questions.py` is
+near-verbatim from a document, and the questions around them inherited that
+vocabulary. The signal was reading my authorship, not the corpus's coverage.
+
+So the new gate fails in the same shape as the old one. Distance can't tell a
+covered campus topic from an uncovered one because both are the same kind of
+sentence about the same institution. Lexical overlap can't either, because it
+measures which words the student happened to choose. **Both signals answer
+"does this question resemble the corpus?" when the question that needs
+answering is "does the corpus contain this answer?"** Adding a second wrong
+question doesn't produce a right one — and the 0.067-wide window I tuned into
+(`0.333 < cutoff <= 0.400`, a single ratio step on questions with three to
+seven content words) should have been the warning that I was fitting 18 data
+points rather than finding a mechanism.
+
+**What the evidence actually points at.** The only component that got every
+one of these cases right is the one already in the system: the grounding
+prompt. It refused both gate leaks in Milestone 3 (*"the documents do not
+mention a spring career fair"*) and it would have answered all five reworded
+questions, because it reads the chunk instead of measuring resemblance to it.
+The honest next move is not a third retrieval-stage signal — it is to accept
+that this judgment belongs after retrieval, and to make the cheap gate
+deliberately permissive so it only catches the far-out cases it *can* catch,
+paying for one model call on the near ones. I did not make that change: it is a
+different fix from the one my diagnosis named, and this milestone is one change,
+measured.
+
+**What I'd need before trusting any of this.** A test set I did not write while
+reading the corpus. Every number in this project, good and bad, traces back to
+that one flaw — the criteria passed because the questions were easy, the fix
+looked promising because the questions shared the corpus's words, and the fix's
+failure only became visible when I wrote five questions that didn't.
 
 ## What's Still Broken
 

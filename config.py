@@ -45,6 +45,22 @@ TOP_K = 5               # how many chunks to pull back per question
 # Most corpora land somewhere between 0.45 and 0.75.
 THRESHOLD = 0.6
 
+# ─── The lexical support check (Unit 2 Milestone 4) ──────────────────────────
+# The second gate signal. A question must ALSO share at least this fraction of
+# its content words with the nearest retrieved chunk before it is answered.
+#
+# Why it exists: distance alone measures the SHAPE of a question, not its
+# topic. "What are the opening hours for the campus gym?" lands 0.461 from the
+# shuttle timetable because both are "when is this campus thing open" — closer
+# than three of the five questions the system is supposed to answer. No cutoff
+# separates those two groups; their distance bands overlap by 0.121.
+#
+# 0 disables the check, which is the default and the shipped behaviour.
+# See the Milestone 4 write-up in README.md for why it is off: it closes the
+# gate on out-of-corpus questions and closes it just as firmly on real ones
+# asked in different words.
+LEXICAL_MIN = float(os.getenv("AI201_LEXICAL_MIN", "0"))
+
 
 # ─── Models ──────────────────────────────────────────────────────────────────
 # Embeddings run on your own machine and cost no API quota.
