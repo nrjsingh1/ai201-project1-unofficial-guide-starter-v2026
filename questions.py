@@ -46,6 +46,30 @@ OUT_OF_SCOPE = [
 ]
 
 
+# Campus questions the corpus genuinely does not cover — added in Unit 2
+# Milestone 3 as diagnostic evidence, not as a fix.
+#
+# OUT_OF_SCOPE above is drawn from a different world entirely (Mongolia, Rust,
+# the 1994 World Cup), and the gate refuses all five without breaking a sweat.
+# That made criterion 3 look stronger than it is. These are the questions a
+# real student would plausibly ask this system: on-topic for a campus, absent
+# from these documents. They are the harder half of the test, and the gate
+# scores 6 of 8 on them.
+#
+# Nothing reads this list automatically. It is here so the Milestone 3
+# diagnosis can be re-run rather than taken on trust.
+NEAR_MISS = [
+    "What are the opening hours for the campus gym?",
+    "How do I appeal a parking ticket?",
+    "Where do I pick up a package that was mailed to me?",
+    "Is there somewhere to store my bike over the winter?",
+    "How do I register with disability services for exam accommodations?",
+    "When is the spring career fair?",
+    "How do I set up a tuition payment plan?",
+    "Can I call campus security for a walk home at night?",
+]
+
+
 def answered() -> list[dict]:
     """The questions you've actually filled in."""
     return [q for q in QUESTIONS if q.get("question", "").strip()]

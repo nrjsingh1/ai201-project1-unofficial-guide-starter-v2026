@@ -558,6 +558,144 @@ and after. Both are measurement defects, not missed numbers:
 
      Milestone 3. -->
 
+**I missed nothing. Five criteria, five MET, three runs each.**
+
+That is the result that should be read with the most suspicion, so the rest of
+this section is spent arguing that my targets were soft rather than that my
+system is good. One of them turns out to be soft enough that the criterion is
+measuring the wrong question entirely.
+
+### The targets were set low — here is the margin on each
+
+| # | Target | Measured | Headroom |
+|---|---|---|---|
+| 1 | 4 of 5 | 5/5, and still 5/5 when the matcher demands *every* expected word | Large. Never tested a hard retrieval. |
+| 2 | 5 of 5 | 15/15 | Moderate, but `GROUNDING_INSTRUCTION` explicitly orders a citation — this tests the prompt, not the pipeline. |
+| 3 | 4 of 5 | 5/5 | **Illusory — see below.** |
+| 4 | 4 of 5 sampled | 94/94 across the entire corpus | Total. The criterion cannot fail on this corpus. |
+| 5 | 4 of 5 | 5/5, but question 5 lands on 0.60 against a 0.60 bar | Thin. The only criterion with a cell that nearly went the other way. |
+
+Criteria 1 and 4 are the clearest cases of a safe target. Criterion 4 samples
+five chunks out of 94 and asks that four pass a check that all 94 pass —
+there is no sample of five that could have failed it. Criterion 1 is safe for a
+different reason: every `expects` phrase I wrote in Unit 1 turned out to be
+near-verbatim from one document, so retrieval only ever had to match text
+against itself.
+
+### Criterion 3 is not just soft — it is measuring the wrong thing
+
+**Stage: embedding. Mechanism: distance measures question *shape*, not topic.**
+
+My five `OUT_OF_SCOPE` questions come from a different world entirely, and they
+sit at distances 0.825–0.934 against a 0.6 cutoff. Nothing about that is close.
+So I wrote eight questions that a real student would actually ask this system —
+on-topic for a campus, absent from these documents — and put them through the
+same gate (`questions.py::NEAR_MISS`, measured with `store.py::search` and
+`gate.py::check`):
+
+```
+  0.461  LET THROUGH  What are the opening hours for the campus gym?
+  0.575  LET THROUGH  When is the spring career fair?
+  0.612  refused      Can I call campus security for a walk home at night?
+  0.646  refused      How do I set up a tuition payment plan?
+  0.647  refused      Is there somewhere to store my bike over the winter?
+  0.657  refused      How do I appeal a parking ticket?
+  0.686  refused      How do I register with disability services for exam accommodations?
+  0.747  refused      Where do I pick up a package that was mailed to me?
+  -> refused 6 of 8
+```
+
+6 of 8 is 75%. Against the 80% my criterion asks for, **that is a MISS** — and
+it is the same gate, the same cutoff and the same code that scored 5 of 5 an
+hour earlier. The only thing that changed is that the questions got realistic.
+
+The three distance bands say why:
+
+```
+  in-scope     0.340 .. 0.582     <- must pass
+  near-miss    0.461 .. 0.747     <- must be refused, OVERLAPS in-scope by 0.121
+  original oos 0.825 .. 0.934     <- the easy set I actually tested against
+```
+
+The mechanism, question by question. The gym question's nearest chunk is
+`transit_shuttle.txt`, whose text is *"Runs a loop every 20 minutes from 7am to
+11pm on weekdays"*. Gym and shuttle share no topic at all; what they share is
+being a **"when is this campus thing open"** question, and the embedding scores
+that structural resemblance at 0.461 — closer than three of my five real
+questions. The career-fair question lands on `orientation_what_matters.txt`,
+which contains the phrase *"The club fair is..."* — overlap on the literal word
+"fair" plus general campus-event vocabulary.
+
+**The pattern: both leaks are schedule-and-event questions, and both match on
+question shape or shared campus vocabulary rather than subject matter.** That
+is one failure, not two. It is also the failure a distance threshold is
+structurally unable to fix, because "campus topic we happen to cover" and
+"campus topic we don't" are not far apart in embedding space — they are the
+same kind of sentence about the same institution.
+
+**No cutoff rescues it.** Sweeping every threshold from 0.40 to 0.78:
+
+```
+   cutoff | in-scope kept | near-miss refused | total correct
+     0.46 |           3/5 |               8/8 | 11/13   <- best, but loses 2 real questions
+     0.54 |           4/5 |               7/8 | 11/13
+     0.60 |           5/5 |               6/8 | 11/13   <- current setting
+     0.66 |           5/5 |               2/8 |  7/13
+```
+
+0.6 is already tied for the best operating point available. Refusing the gym
+question needs a cutoff under 0.461, which would also refuse four of my five
+genuine questions. The bands overlap, so the trade is forced. **This is not a
+threshold that was tuned wrong; it is a threshold doing the only thing it can.**
+
+### Why this didn't reach a user, and why that isn't reassuring
+
+Both leaked questions still came out correct, because `generate.py`'s
+`GROUNDING_INSTRUCTION` caught what the gate missed:
+
+```
+Q: What are the opening hours for the campus gym?    (gate passed it at 0.461)
+   "I do not have enough information to answer your question."
+
+Q: When is the spring career fair?                   (gate passed it at 0.575)
+   "I don't have enough information to answer your question, as the documents
+    do not mention a spring career fair."
+```
+
+So user-visible behaviour is fine and the two-layer design is doing its job.
+Three reasons that does not repair criterion 3. The gate's stated purpose in
+`gate.py` is that *"a question the gate refuses never reaches the model"* — both
+of these reached the model and cost an API call each. Layer two is a model, so
+it holds probabilistically rather than always; `gate.py`'s own docstring makes
+exactly this argument, that asking nicely means *"it will sometimes ignore you
+and write something confident and wrong"*. And criterion 3 is written about the
+gate specifically, so a rescue downstream is not the criterion passing.
+
+**Criterion 3 as I tested it: MET. Criterion 3 as it would be tested with
+questions anyone would actually ask: MISSED at the embedding stage, masked by
+the generation stage.**
+
+### What I would tighten, and to what
+
+**Primary — criterion 3.** Replace the five `OUT_OF_SCOPE` questions with the
+eight in `NEAR_MISS`, and add the cost clause the current wording leaves
+implicit:
+
+> The relevance gate refuses at least 7 of 8 campus-adjacent questions the
+> corpus does not cover, and no refused question reaches the model.
+
+Today that reads 6 of 8 — a real miss, with a diagnosed cause, which is what a
+criterion is for. Measuring it needs no model calls.
+
+**Criterion 4:** the sampled-five framing can't fail, so drop the sample —
+*"every chunk in the corpus begins at a sentence or heading boundary and ends
+on terminal punctuation"*, currently 94/94. A criterion that only holds at 100%
+is one a future chunking change can actually break.
+
+**Criterion 1:** require the answer to be retrieved for questions that share no
+vocabulary with the source document, rather than for `expects` phrases lifted
+from it. That is the harder test I thought I had written and didn't.
+
 ## The Improvement
 
 **What I changed:**
