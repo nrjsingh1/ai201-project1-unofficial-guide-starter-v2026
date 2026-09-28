@@ -116,6 +116,37 @@ def names_a_source(answer: str, results) -> bool:
 
 # ─── Criterion 5 — grounded facts and an accurate citation ───────────────────
 
+CITATION_SCAFFOLD = {"source", "sources", "txt", "according", "also", "found",
+                     "document", "documents", "file", "mentioned", "states"}
+
+
+def unsupported_words(answer: str, results) -> list[str]:
+    """
+    Words in the answer that appear in no retrieved chunk.
+
+    Criterion 5 has two halves. `grounded_answer` below covers the second —
+    the citation points at a file that really carries the fact. This covers the
+    first: "contains ONLY facts explicitly present in the retrieved chunks."
+    Nothing in `judge` was checking that, so it was being asserted rather than
+    measured.
+
+    This is a screen, not a verdict. It flags words, and a word is not a fact:
+    citation scaffolding ("Source:", "according to") and paraphrase that echoes
+    the question ("avoid", "apply") both surface here and neither is a
+    fabrication. What it is good for is making sure nothing gets asserted
+    without a human looking at it — anything it flags has to be read.
+    """
+    supported = set()
+    for r in results:
+        supported |= _stems(r.text)
+    for r in results:
+        supported |= _stems(r.source.replace("_", " ").replace(".txt", ""))
+    return sorted(
+        w for w in content_words(answer)
+        if w[:STEM] not in supported and w not in CITATION_SCAFFOLD
+    )
+
+
 def grounded_answer(expects: str, answer: str, results) -> bool:
     """
     Stricter than criterion 2. The answer has to carry the expected fact, AND
@@ -164,6 +195,7 @@ def judge(question, expects, answer, results) -> bool:
         "c1_retrieval_hit": retrieval_hit(expects, results),
         "c2_names_source": names_a_source(answer, results),
         "c5_grounded": grounded_answer(expects, answer, results),
+        "c5_unsupported": unsupported_words(answer, results),
         "cited": cited_sources(answer, results),
         "best_distance": min((r.distance for r in results), default=1.0),
     }

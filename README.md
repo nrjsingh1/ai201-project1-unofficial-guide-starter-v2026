@@ -459,11 +459,84 @@ unrelated four leaking in.
 
 | # | Criterion | Verdict | How I decided |
 |---|---|---|---|
-| 1 |  |  |  |
-| 2 |  |  |  |
-| 3 |  |  |  |
-| 4 |  |  |  |
-| 5 |  |  |  |
+| 1 | Retrieved chunk contains the answer | **MET** | 5/5 on all three runs against a target of 4 of 5. Not a threshold artifact: it stays 5/5 even when the matcher is tightened to demand *every* expected content word (COVERAGE 1.0). |
+| 2 | Every answer names a source | **MET** | 15 of 15 answers named a file, against a target of 5 of 5 — the strictest target I set, and the only one with no slack. Scope note below. |
+| 3 | Gate stops out-of-corpus questions | **MET** | All five out-of-scope questions refused, closest at 0.825 against a 0.6 cutoff. Criterion reworded — see below; verdict identical either way. |
+| 4 | Chunk completeness and boundary integrity | **MET** | 5/5 sampled, and 94/94 when run over the whole corpus. Criterion reworded — see below; verdict identical either way. |
+| 5 | Answer factual grounding and citation accuracy | **MET** | 5/5, but this is the close one. Question 5 passes at coverage exactly 0.60 against a 0.60 bar, and the criterion's other half wasn't measured until I went back for it. Detail below. |
+
+### Where it was close, and where I argued against myself
+
+**Criterion 5 is the only genuinely close call, and it passes on the target
+rather than on the margin.** Question 5's answer — *"The best time to do
+laundry to avoid waiting is Tuesday or Wednesday morning."* — covers 6 of the
+10 content words in its `expects` phrase. That is 0.60 against a 0.60 bar: one
+word the other way and it fails. Tightening `scorer.py::COVERAGE` to 0.7 drops
+criterion 5 to 4 of 5 on every run.
+
+I took the opposite verdict seriously here and it doesn't hold. 4 of 5 is still
+MET, because 4 of 5 is the target I wrote in Unit 1 and the target doesn't move
+now that I've seen the result. So criterion 5 is MET at *every* coverage
+setting from 0.5 to 1.0 — the verdict never depended on the threshold I picked.
+What the sensitivity does expose is that `expects` for question 5 is two
+sentences where the question only asks for one. The answer is correct; the
+yardstick was over-specified. That's a question-design problem, and under the
+rule that a number you missed stays where it is, it's not grounds for editing
+`expects` — I'd be editing the test to flatter the result.
+
+**Criterion 5's verdict initially rested on something I hadn't measured.** The
+criterion has two halves: the answer contains *only* facts from the retrieved
+chunks, and the citation matches the file the fact came from.
+`scorer.py::grounded_answer` only ever checked the second. The first was being
+asserted. I added `scorer.py::unsupported_words` to screen every answer for
+content words appearing in no retrieved chunk, and read everything it flagged:
+
+```
+  q1 r1: ['though']          q3 r3: ['00']
+  q2 r1: ['stay']            q4 r1: ['apply', 'best', 'posted']
+  q5 r1: ['avoid', 'waiting']
+```
+
+All paraphrase or reformatting, no invented facts. `00` is the one worth
+naming: run 3 of question 3 wrote *"go to the health centre at 8:00 am"* where
+`health_center.txt` says *"8am"*. Same fact, tidier formatting — not a
+fabrication, but it is the model editing the corpus's wording, which is the
+direction hallucinations start from. Had I not gone looking, criterion 5 would
+have been scored MET on half its own definition.
+
+**Criterion 2 needs its scope stated.** "Every answer the system produces"
+counts 15 of 15 — but only if a gate refusal isn't an answer. Across all ten
+questions including `OUT_OF_SCOPE`, output naming a source is 15 of 30. I score
+refusals as out of scope for this criterion because `gate.REFUSAL` is a fixed
+string in `gate.py`, returned before any model call — the system never
+*produced* it in the sense the criterion means. That reading is defensible but
+it is a reading, and someone coming to the criterion cold could land the other
+way. Worth stating rather than leaving implicit.
+
+**Criterion 1 is the one verdict I couldn't argue against.** Every expected
+fact appeared in a retrieved chunk, in the specific chunk the scorer named,
+under every matcher setting I tried. The honest caveat isn't about the
+measurement, it's about the difficulty: all five `expects` phrases turned out
+to be near-verbatim from a single document, so retrieval was never asked to do
+anything hard. Criterion 1 is MET and the test behind it is easy — those are
+both true and the second one is the more useful fact.
+
+### Revisions
+
+Two criteria are reworded in [`criteria.md`](criteria.md), originals left in
+place above each revision. **Neither changes a verdict** — both were 5/5 before
+and after. Both are measurement defects, not missed numbers:
+
+- **Criterion 3** said "4 of 5 **tries**". Retrieval is deterministic, so five
+  tries of one question can only come out 5 of 5 or 0 of 5, never 4. I have
+  five *questions*, not five tries, and the original justified its slack as
+  absorbing "embedding noise" that has no run-to-run variation to produce.
+- **Criterion 4** asked for chunks that "read as a complete, self-contained
+  thought" *and* don't cut mid-sentence. `scorer.py::chunk_integrity` only
+  covers the second. Given *"It backs up on Sunday evenings for that reason."*
+  it returns intact — nothing is severed, yet it plainly isn't self-contained.
+  The dropped half was a judgment I couldn't count on making the same way
+  twice.
 
 ## Diagnoses
 
